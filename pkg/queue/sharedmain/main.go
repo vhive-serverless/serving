@@ -31,7 +31,9 @@ import (
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"knative.dev/control-protocol/pkg/certificates"
 	netheader "knative.dev/networking/pkg/http/header"
@@ -113,6 +115,10 @@ type config struct {
 	// Concurrency State Endpoint configuration
 	ConcurrencyStateEndpoint  string `split_words:"true"` // optional
 	ConcurrencyStateTokenPath string `split_words:"true"` // optional
+
+	// vHive configuration
+	GuestAddr string `split_words:"true" required:"true"`
+	GuestPort string `split_words:"true" required:"true"`
 
 	Env
 }
@@ -233,6 +239,22 @@ func Main(opts ...Option) error {
 	// Setup probe to run for checking user-application healthiness.
 	// Do not set up probe if concurrency state endpoint is set, as
 	// paused containers don't play well with k8s readiness probes.
+	servingProbe := &corev1.Probe{
+		SuccessThreshold: 1,
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{
+				Host: env.GuestAddr,
+				Port: intstr.FromString(env.GuestPort),
+			},
+		},
+	}
+
+	var err error
+	env.ServingReadinessProbe, err = readiness.EncodeProbe(servingProbe)
+	if err != nil {
+		logger.Fatalw("Failed to create stats reporter", zap.Error(err))
+	}
+
 	probe := func() bool { return true }
 	if env.ServingReadinessProbe != "" && env.ConcurrencyStateEndpoint == "" {
 		probe = buildProbe(logger, env.ServingReadinessProbe, env.EnableHTTP2AutoDetection).ProbeContainer
@@ -343,7 +365,7 @@ func buildServer(ctx context.Context, env config, transport http.RoundTripper, p
 	ce *queue.ConcurrencyEndpoint, enableTLS bool) (*http.Server, *pkghandler.Drainer) {
 	// TODO: If TLS is enabled, execute probes twice and tracking two different sets of container health.
 
-	target := net.JoinHostPort("127.0.0.1", env.UserPort)
+	target := net.JoinHostPort(env.GuestAddr, env.GuestPort)
 
 	httpProxy := pkghttp.NewHeaderPruningReverseProxy(target, pkghttp.NoHostOverride, activator.RevisionHeaders, false /* use HTTP */)
 	httpProxy.Transport = transport

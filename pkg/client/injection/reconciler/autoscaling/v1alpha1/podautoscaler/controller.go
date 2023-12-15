@@ -23,6 +23,9 @@ import (
 	fmt "fmt"
 	reflect "reflect"
 	strings "strings"
+	// "time"
+
+	"golang.org/x/time/rate"
 
 	zap "go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +35,7 @@ import (
 	scheme "k8s.io/client-go/kubernetes/scheme"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	record "k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	controller "knative.dev/pkg/controller"
 	logging "knative.dev/pkg/logging"
@@ -105,7 +109,12 @@ func NewImpl(ctx context.Context, r Interface, classValue string, optionsFns ...
 		zap.String(logkey.Kind, "autoscaling.internal.knative.dev.PodAutoscaler"),
 	)
 
-	impl := controller.NewContext(ctx, rec, controller.ControllerOptions{WorkQueueName: ctrTypeName, Logger: logger})
+	rl := workqueue.NewMaxOfRateLimiter(
+		// workqueue.NewItemExponentialFailureRateLimiter(time.Millisecond, 1000*time.Second),
+		// 10 qps, 100 bucket size.  This is only for retry speed and its only the overall factor (not per item)
+		&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(100), 1000)},
+	)
+	impl := controller.NewContext(ctx, rec, controller.ControllerOptions{WorkQueueName: ctrTypeName, Logger: logger, RateLimiter: rl})
 	agentName := defaultControllerAgentName
 
 	// Pass impl to the options. Save any optional results.

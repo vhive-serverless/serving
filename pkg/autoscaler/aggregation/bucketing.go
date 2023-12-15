@@ -207,9 +207,9 @@ func (t *TimedFloat64Buckets) WindowAverage(now time.Time) float64 {
 		// If LastWrite equal or greater than Now
 		// return the current WindowTotal, divided by the
 		// number of valid buckets
-		numB := math.Min(
-			float64(t.lastWrite.Sub(t.firstWrite)/t.granularity)+1, // +1 since the times are inclusive.
-			float64(len(t.buckets)))
+		numB := //math.Min(
+			//float64(t.lastWrite.Sub(t.firstWrite)/t.granularity)+1, // +1 since the times are inclusive.
+			float64(len(t.buckets)) //)
 		return roundToNDigits(precision, t.windowTotal/numB)
 	case d < t.window:
 		// If we haven't received metrics for some time, which is less than

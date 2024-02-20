@@ -32,7 +32,9 @@ import (
 	"go.uber.org/zap"
 	"knative.dev/serving/pkg/queue/certificate"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"knative.dev/networking/pkg/certificates"
 	netstats "knative.dev/networking/pkg/http/stats"
@@ -107,6 +109,10 @@ type config struct {
 	TracingConfigBackend        tracingconfig.BackendType `split_words:"true"` // optional
 	TracingConfigSampleRate     float64                   `split_words:"true"` // optional
 	TracingConfigZipkinEndpoint string                    `split_words:"true"` // optional
+
+	// vHive configuration
+	GuestAddr string `split_words:"true" required:"true"`
+	GuestPort string `split_words:"true" required:"true"`
 
 	Env
 }
@@ -224,6 +230,22 @@ func Main(opts ...Option) error {
 		}
 	}()
 
+	servingProbe := &corev1.Probe{
+		SuccessThreshold: 1,
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{
+				Host: env.GuestAddr,
+				Port: intstr.FromString(env.GuestPort),
+			},
+		},
+	}
+
+	var err error
+	env.ServingReadinessProbe, err = readiness.EncodeProbe(servingProbe)
+	if err != nil {
+		logger.Fatalw("Failed to create stats reporter", zap.Error(err))
+	}
+
 	// Setup probe to run for checking user-application healthiness.
 	probe := func() bool { return true }
 	if env.ServingReadinessProbe != "" {
@@ -251,7 +273,6 @@ func Main(opts ...Option) error {
 
 	tlsServers := make(map[string]*http.Server)
 	var certWatcher *certificate.CertWatcher
-	var err error
 
 	if tlsEnabled {
 		tlsServers["main"] = mainServer(":"+env.QueueServingTLSPort, mainHandler)

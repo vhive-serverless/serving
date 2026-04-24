@@ -40,6 +40,7 @@ import (
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"knative.dev/networking/pkg/certificates"
 	netstats "knative.dev/networking/pkg/http/stats"
@@ -55,6 +56,8 @@ import (
 	"knative.dev/serving/pkg/queue"
 	"knative.dev/serving/pkg/queue/certificate"
 	"knative.dev/serving/pkg/queue/readiness"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -102,6 +105,10 @@ type config struct {
 
 	// Metrics, Tracing and Profiling
 	Observability observability.Config `ignored:"true"`
+
+	// vHive configuration
+	GuestAddr string `split_words:"true" required:"true"`
+	GuestPort string `split_words:"true" required:"true"`
 
 	Env
 }
@@ -233,6 +240,22 @@ func Main(opts ...Option) error {
 		}
 	}()
 
+	servingProbe := &corev1.Probe{
+		SuccessThreshold: 1,
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{
+				Host: env.GuestAddr,
+				Port: intstr.FromString(env.GuestPort),
+			},
+		},
+	}
+
+	var err error
+	env.ServingReadinessProbe, err = readiness.EncodeSingleProbe(servingProbe)
+	if err != nil {
+		logger.Fatalw("Failed to create stats reporter", zap.Error(err))
+	}
+
 	// Setup probe to run for checking user-application healthiness.
 	probe := func() bool { return true }
 	if env.ServingReadinessProbe != "" {
@@ -263,7 +286,6 @@ func Main(opts ...Option) error {
 
 	var tlsServer *http.Server
 	var certWatcher *certificate.CertWatcher
-	var err error
 
 	errCh := make(chan error)
 	for name, server := range httpServers {
@@ -379,7 +401,7 @@ func buildTransport(env config, tp trace.TracerProvider, mp metric.MeterProvider
 }
 
 func buildProxyHandler(logger *zap.SugaredLogger, env config, transport http.RoundTripper) *httputil.ReverseProxy {
-	target := net.JoinHostPort("127.0.0.1", env.UserPort)
+	target := net.JoinHostPort(env.GuestAddr, env.GuestPort)
 	httpProxy := pkghttp.NewHeaderPruningReverseProxy(target, pkghttp.NoHostOverride, activator.RevisionHeaders, false /* use HTTP */)
 	httpProxy.Transport = transport
 	httpProxy.ErrorHandler = pkghandler.Error(logger)
